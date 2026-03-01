@@ -3,21 +3,38 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { groupService } from '../services/groupService';
 import toast from 'react-hot-toast';
+import { expenseService } from '../services/expenseService';
+import { balanceService } from '../services/balanceService';
 
 const GroupDetail = () => {
     const { id } = useParams();
     const navigate = useNavigate();
     const { user } = useAuth();
+    
+    // All useState hooks first
     const [group, setGroup] = useState(null);
     const [loading, setLoading] = useState(true);
     const [showAddMember, setShowAddMember] = useState(false);
     const [phoneNumber, setPhoneNumber] = useState('');
     const [addingMember, setAddingMember] = useState(false);
+    const [expenses, setExpenses] = useState([]);
+    const [balances, setBalances] = useState(null);
+    const [loadingExpenses, setLoadingExpenses] = useState(true);
 
+    // ALL useEffect hooks must be here, BEFORE any conditional returns
+    
+    
     useEffect(() => {
         fetchGroup();
     }, [id]);
 
+    useEffect(() => {
+        if (group) {
+            fetchExpenses();
+        }
+    }, [group]);  // This is now correctly placed before returns
+
+    // All function definitions next
     const fetchGroup = async () => {
         try {
             const response = await groupService.getGroupById(id);
@@ -27,6 +44,21 @@ const GroupDetail = () => {
             navigate('/groups');
         } finally {
             setLoading(false);
+        }
+    };
+
+    const fetchExpenses = async () => {
+        try {
+            const [expensesRes, balancesRes] = await Promise.all([
+                expenseService.getGroupExpenses(id),
+                balanceService.getGroupBalances(id)
+            ]);
+            setExpenses(expensesRes.expenses);
+            setBalances(balancesRes);
+        } catch (error) {
+            toast.error('Failed to load expenses');
+        } finally {
+            setLoadingExpenses(false);
         }
     };
 
@@ -61,22 +93,23 @@ const GroupDetail = () => {
     };
 
     const handleLeaveGroup = async () => {
-    if (!window.confirm('Are you sure you want to leave this group?')) return;
+        if (!window.confirm('Are you sure you want to leave this group?')) return;
 
-    try {
-        const response = await groupService.leaveGroup(id);
-        toast.success(response.message || 'You left the group');
-        navigate('/groups');
-    } catch (error) {
-        toast.error(error.message || 'Failed to leave group');
-    }
-};
+        try {
+            const response = await groupService.leaveGroup(id);
+            toast.success(response.message || 'You left the group');
+            navigate('/groups');
+        } catch (error) {
+            toast.error(error.message || 'Failed to leave group');
+        }
+    };
 
-    // Check if current user is admin
+    // Computed values can be after functions
     const isAdmin = group?.members?.some(
         m => m.user?._id === user?._id && m.role === 'admin'
     );
 
+    // NOW we can have conditional returns
     if (loading) {
         return (
             <div className="flex justify-center items-center h-64">
@@ -99,8 +132,10 @@ const GroupDetail = () => {
         );
     }
 
+    // Return the JSX
     return (
         <div className="min-h-screen bg-gray-50 py-8">
+            {/* ... rest of your JSX ... */}
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 {/* Header */}
                 <div className="mb-8">
@@ -134,7 +169,6 @@ const GroupDetail = () => {
                                 Leave Group
                             </button>
                         )}
-
                     </div>
                 </div>
 
@@ -210,6 +244,135 @@ const GroupDetail = () => {
                                 )}
                             </div>
                         ))}
+                    </div>
+                </div>
+
+                {/* Balances Section */}
+                {balances && (
+                    <div className="mt-8 bg-white rounded-lg shadow overflow-hidden">
+                        <div className="px-6 py-4 border-b border-gray-200">
+                            <h2 className="text-lg font-medium text-gray-900">Who Owes Whom</h2>
+                        </div>
+                        <div className="p-6">
+                            {balances.simplifiedDebts && balances.simplifiedDebts.length > 0 ? (
+                                <div className="space-y-3">
+                                    {balances.simplifiedDebts.map((debt, index) => (
+                                        <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                                            <div className="flex items-center space-x-2">
+                                                <span className="font-medium text-gray-900">{debt.fromName}</span>
+                                                <span className="text-gray-400">→</span>
+                                                <span className="font-medium text-gray-900">{debt.toName}</span>
+                                            </div>
+                                            <span className="text-red-600 font-medium">
+                                                ETB {debt.amount.toFixed(2)}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <p className="text-center text-gray-500 py-4">
+                                    All settled up! No outstanding balances.
+                                </p>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {/* Expenses Section */}
+                <div className="mt-8">
+                    <div className="flex justify-between items-center mb-4">
+                        <h2 className="text-lg font-medium text-gray-900">Expenses</h2>
+                        <Link
+                            to={`/groups/${id}/add-expense`}
+                            className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 text-sm"
+                        >
+                            + Add Expense
+                        </Link>
+                    </div>
+
+                    <div className="bg-white rounded-lg shadow overflow-hidden">
+                        {loadingExpenses ? (
+                            <div className="text-center py-8">
+                                <div className="w-8 h-8 border-4 border-primary-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+                            </div>
+                        ) : expenses.length === 0 ? (
+                            <div className="text-center py-12">
+                                <svg
+                                    className="mx-auto h-12 w-12 text-gray-400"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    viewBox="0 0 24 24"
+                                >
+                                    <path
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        strokeWidth={2}
+                                        d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                                    />
+                                </svg>
+                                <h3 className="mt-2 text-sm font-medium text-gray-900">No expenses</h3>
+                                <p className="mt-1 text-sm text-gray-500">
+                                    Get started by adding your first expense.
+                                </p>
+                            </div>
+                        ) : (
+                            <div className="divide-y divide-gray-200">
+                                {expenses.map((expense) => (
+                                    <div key={expense._id} className="p-6 hover:bg-gray-50">
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <h3 className="text-lg font-medium text-gray-900">
+                                                    {expense.description}
+                                                </h3>
+                                                <p className="text-sm text-gray-500">
+                                                    Paid by {expense.paidBy.FullName} • {new Date(expense.date).toLocaleDateString()}
+                                                </p>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="text-lg font-bold text-gray-900">
+                                                    ETB {expense.amount.toFixed(2)}
+                                                </p>
+                                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-primary-100 text-primary-800">
+                                                    {expense.category}
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        {/* Split summary */}
+                                        <div className="mt-4">
+                                            <p className="text-sm font-medium text-gray-700 mb-2">Split details:</p>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                {expense.splits.map((split, idx) => {
+                                                    const isPayer = split.user._id === expense.paidBy._id;
+                                                    return (
+                                                        <div key={idx} className="flex items-center text-sm">
+                                                            <span className="text-gray-600">{split.user.FullName}:</span>
+                                                            <span className={`ml-2 font-medium ${
+                                                                split.isSettled 
+                                                                    ? 'text-green-600' 
+                                                                    : isPayer 
+                                                                        ? 'text-blue-600' 
+                                                                        : 'text-red-600'
+                                                            }`}>
+                                                                ETB {split.amount.toFixed(2)}
+                                                                {split.isSettled && ' ✓'}
+                                                            </span>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+
+                                        {/* Notes if any */}
+                                        {expense.notes && (
+                                            <p className="mt-2 text-sm text-gray-500">
+                                                Note: {expense.notes}
+                                            </p>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 </div>
 

@@ -8,6 +8,7 @@ import Dashboard from './screens/Dashboard';
 import CreateGroup from './screens/CreateGroup';
 import GroupList from './screens/GroupList';
 import GroupDetail from './screens/GroupDetail';
+import AddExpense from './screens/AddExpense';
 
 const ProtectedRoute = ({ children }) => {
   const { isAuthenticated, loading } = useAuth();
@@ -79,6 +80,13 @@ function AppContent() {
           <GroupDetail />
         </ProtectedRoute>
       } />
+      
+      <Route path="/groups/:groupId/add-expense" element={
+          <ProtectedRoute>
+              <AddExpense />
+          </ProtectedRoute>
+      } />
+
     </Routes>
   );
 }
