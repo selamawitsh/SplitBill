@@ -9,6 +9,7 @@ import CreateGroup from './screens/CreateGroup';
 import GroupList from './screens/GroupList';
 import GroupDetail from './screens/GroupDetail';
 import AddExpense from './screens/AddExpense';
+import SettleUp from './screens/SettleUp';
 
 const ProtectedRoute = ({ children }) => {
   const { isAuthenticated, loading } = useAuth();
@@ -86,6 +87,12 @@ function AppContent() {
               <AddExpense />
           </ProtectedRoute>
       } />
+
+      <Route path="/groups/:groupId/settle-up" element={
+        <ProtectedRoute>
+            <SettleUp />
+        </ProtectedRoute>
+    } />
 
     </Routes>
   );

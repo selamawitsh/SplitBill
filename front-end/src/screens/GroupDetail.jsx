@@ -5,6 +5,7 @@ import { groupService } from '../services/groupService';
 import toast from 'react-hot-toast';
 import { expenseService } from '../services/expenseService';
 import { balanceService } from '../services/balanceService';
+import SettlementHistory from '../components/SettlementHistory';
 
 const GroupDetail = () => {
     const { id } = useParams();
@@ -373,6 +374,23 @@ const GroupDetail = () => {
                                 ))}
                             </div>
                         )}
+                    </div>
+                </div>
+
+                {/* Settlements Section */}
+                <div className="mt-8">
+                    <div className="flex justify-between items-center mb-4">
+                        <h2 className="text-lg font-medium text-gray-900">Settlement History</h2>
+                        <Link
+                            to={`/groups/${id}/settle-up`}
+                            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 text-sm"
+                        >
+                            Settle Up
+                        </Link>
+                    </div>
+                    
+                    <div className="bg-white rounded-lg shadow overflow-hidden p-6">
+                        <SettlementHistory groupId={id} />
                     </div>
                 </div>
 

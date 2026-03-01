@@ -5,7 +5,7 @@ import {protect} from './middleware/auth.middleware.js';
 import groupRoutes from './routes/group.routes.js';
 import expenseRoutes from './routes/expense.routes.js';
 import balanceRoutes from './routes/balance.routes.js';
-
+import settlementRoutes from './routes/settlement.routes.js';
 
 const app = express();
 
@@ -16,6 +16,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/groups', groupRoutes);
 app.use('/api/expenses', expenseRoutes);  
 app.use('/api/balances', balanceRoutes);
+app.use('/api/settlements', settlementRoutes);
 
 
 app.get('/api/test', (req, res) => {
