@@ -2,15 +2,43 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { NotificationProvider } from './context/NotificationContext';
+
+// Auth Screens
 import Login from './screens/Login';
 import Register from './screens/Register';
+
+// Main Screens
 import Dashboard from './screens/Dashboard';
+import NotificationsScreen from './screens/NotificationsScreen';
+
+// Group Screens
 import CreateGroup from './screens/CreateGroup';
 import GroupList from './screens/GroupList';
 import GroupDetail from './screens/GroupDetail';
+
+// Expense Screens
 import AddExpense from './screens/AddExpense';
+
+// Settlement Screens
 import SettleUp from './screens/SettleUp';
 
+// Components
+import Navbar from './components/Navbar';
+
+// Layout for protected routes (includes Navbar)
+const ProtectedLayout = ({ children }) => {
+  return (
+    <>
+      <Navbar />
+      <main className="min-h-screen bg-gray-50">
+        {children}
+      </main>
+    </>
+  );
+};
+
+// Protected Route wrapper
 const ProtectedRoute = ({ children }) => {
   const { isAuthenticated, loading } = useAuth();
   
@@ -25,9 +53,10 @@ const ProtectedRoute = ({ children }) => {
     );
   }
   
-  return isAuthenticated ? children : <Navigate to="/login" />;
+  return isAuthenticated ? <ProtectedLayout>{children}</ProtectedLayout> : <Navigate to="/login" />;
 };
 
+// Public Route wrapper (no Navbar)
 const PublicRoute = ({ children }) => {
   const { isAuthenticated, loading } = useAuth();
   
@@ -48,6 +77,7 @@ const PublicRoute = ({ children }) => {
 function AppContent() {
   return (
     <Routes>
+      {/* Public Routes */}
       <Route path="/" element={<Navigate to="/dashboard" />} />
       <Route path="/login" element={
         <PublicRoute>
@@ -59,6 +89,8 @@ function AppContent() {
           <Register />
         </PublicRoute>
       } />
+      
+      {/* Protected Routes - All with Navbar */}
       <Route path="/dashboard" element={
         <ProtectedRoute>
           <Dashboard />
@@ -82,18 +114,29 @@ function AppContent() {
         </ProtectedRoute>
       } />
       
+      {/* Expense Routes */}
       <Route path="/groups/:groupId/add-expense" element={
-          <ProtectedRoute>
-              <AddExpense />
-          </ProtectedRoute>
+        <ProtectedRoute>
+          <AddExpense />
+        </ProtectedRoute>
       } />
 
+      {/* Settlement Routes */}
       <Route path="/groups/:groupId/settle-up" element={
         <ProtectedRoute>
-            <SettleUp />
+          <SettleUp />
         </ProtectedRoute>
-    } />
+      } />
 
+      {/* Notification Routes */}
+      <Route path="/notifications" element={
+        <ProtectedRoute>
+          <NotificationsScreen />
+        </ProtectedRoute>
+      } />
+
+      {/* Catch all - redirect to dashboard */}
+      <Route path="*" element={<Navigate to="/dashboard" />} />
     </Routes>
   );
 }
@@ -102,29 +145,37 @@ function App() {
   return (
     <Router>
       <AuthProvider>
-        <Toaster 
-          position="top-right"
-          toastOptions={{
-            duration: 4000,
-            style: {
-              background: '#363636',
-              color: '#fff',
-            },
-            success: {
-              duration: 3000,
-              style: {
-                background: '#22c55e',
-              },
-            },
-            error: {
+        <NotificationProvider>
+          <Toaster 
+            position="top-right"
+            toastOptions={{
               duration: 4000,
               style: {
-                background: '#ef4444',
+                background: '#363636',
+                color: '#fff',
               },
-            },
-          }}
-        />
-        <AppContent />
+              success: {
+                duration: 3000,
+                style: {
+                  background: '#22c55e',
+                },
+              },
+              error: {
+                duration: 4000,
+                style: {
+                  background: '#ef4444',
+                },
+              },
+              loading: {
+                duration: 3000,
+                style: {
+                  background: '#3b82f6',
+                },
+              },
+            }}
+          />
+          <AppContent />
+        </NotificationProvider>
       </AuthProvider>
     </Router>
   );

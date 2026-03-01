@@ -1,9 +1,128 @@
 import Settlement from '../models/Settlement.model.js';
 import Expense from '../models/Expense.model.js';
 import Group from '../models/Group.model.js';
-import mongoose from 'mongoose';
+import { createNotification } from './notification.controller.js';
+import User from '../models/User.model.js';
 
 // @desc    Create a new settlement
+// export const createSettlement = async (req, res) => {
+//     try {
+//         const { groupId, toUser, amount, paymentMethod, notes } = req.body;
+//         const fromUser = req.user._id;
+
+//         console.log('📥 Creating settlement:', { fromUser, toUser, amount, groupId });
+
+//         // Validate required fields
+//         if (!groupId || !toUser || !amount) {
+//             return res.status(400).json({ 
+//                 message: 'Missing required fields' 
+//             });
+//         }
+
+//         // Check if users are in the same group
+//         const group = await Group.findOne({
+//             _id: groupId,
+//             'members.user': { $all: [fromUser, toUser] }
+//         });
+
+//         if (!group) {
+//             return res.status(404).json({ 
+//                 message: 'Group not found or users not in same group' 
+//             });
+//         }
+
+//         // Don't allow settling with yourself
+//         if (fromUser.toString() === toUser.toString()) {
+//             return res.status(400).json({ 
+//                 message: 'Cannot settle with yourself' 
+//             });
+//         }
+
+//         // Create settlement
+//         const settlement = await Settlement.create({
+//             groupId,
+//             fromUser,
+//             toUser,
+//             amount,
+//             paymentMethod: paymentMethod || 'cash',
+//             notes,
+//             status: 'completed',
+//             settledAt: new Date()
+//         });
+
+//         // Find all expenses where fromUser owes money to toUser
+//         const expenses = await Expense.find({
+//             groupId,
+//             'splits.user': fromUser,
+//             'splits.isSettled': false
+//         });
+
+//         console.log('📊 Found unsettled expenses:', expenses.length);
+
+//         // Update the splits for these expenses
+//         let remainingAmount = amount;
+//         const settledExpenses = [];
+
+//         for (const expense of expenses) {
+//             if (remainingAmount <= 0) break;
+
+//             // Find the split for fromUser in this expense
+//             const splitIndex = expense.splits.findIndex(
+//                 s => s.user.toString() === fromUser.toString() && !s.isSettled
+//             );
+
+//             if (splitIndex !== -1) {
+//                 const splitAmount = expense.splits[splitIndex].amount;
+                
+//                 if (splitAmount <= remainingAmount) {
+//                     // Settle this entire split
+//                     expense.splits[splitIndex].isSettled = true;
+//                     expense.splits[splitIndex].settledAt = new Date();
+//                     remainingAmount -= splitAmount;
+//                     settledExpenses.push({
+//                         expenseId: expense._id,
+//                         amount: splitAmount
+//                     });
+//                 } else {
+//                     // Partial settlement - we need to split the expense
+//                     // This is more complex - for now, we'll just mark as settled
+//                     // In a real app, you'd want to handle partial settlements
+//                     expense.splits[splitIndex].isSettled = true;
+//                     expense.splits[splitIndex].settledAt = new Date();
+//                     remainingAmount = 0;
+//                     settledExpenses.push({
+//                         expenseId: expense._id,
+//                         amount: splitAmount
+//                     });
+//                 }
+                
+//                 await expense.save();
+//             }
+//         }
+
+//         // Update settlement with settled expenses
+//         settlement.settledExpenses = settledExpenses;
+//         await settlement.save();
+
+//         // Populate user details
+//         const populatedSettlement = await Settlement.findById(settlement._id)
+//             .populate('fromUser', 'FullName phoneNumber')
+//             .populate('toUser', 'FullName phoneNumber')
+//             .populate('groupId', 'name')
+//             .populate('settledExpenses.expenseId', 'description amount');
+
+//         res.status(201).json({
+//             success: true,
+//             settlement: populatedSettlement
+//         });
+
+//     } catch (error) {
+//         console.error('❌ Create settlement error:', error);
+//         res.status(500).json({ 
+//             message: error.message || 'Server error while creating settlement' 
+//         });
+//     }
+// };
 export const createSettlement = async (req, res) => {
     try {
         const { groupId, toUser, amount, paymentMethod, notes } = req.body;
@@ -22,7 +141,7 @@ export const createSettlement = async (req, res) => {
         const group = await Group.findOne({
             _id: groupId,
             'members.user': { $all: [fromUser, toUser] }
-        });
+        }).populate('members.user', 'FullName');
 
         if (!group) {
             return res.status(404).json({ 
@@ -36,6 +155,10 @@ export const createSettlement = async (req, res) => {
                 message: 'Cannot settle with yourself' 
             });
         }
+
+        // Get user details for notifications
+        const payer = await User.findById(fromUser).select('FullName');
+        const recipient = await User.findById(toUser).select('FullName');
 
         // Create settlement
         const settlement = await Settlement.create({
@@ -83,9 +206,7 @@ export const createSettlement = async (req, res) => {
                         amount: splitAmount
                     });
                 } else {
-                    // Partial settlement - we need to split the expense
-                    // This is more complex - for now, we'll just mark as settled
-                    // In a real app, you'd want to handle partial settlements
+                    // Partial settlement
                     expense.splits[splitIndex].isSettled = true;
                     expense.splits[splitIndex].settledAt = new Date();
                     remainingAmount = 0;
@@ -102,6 +223,61 @@ export const createSettlement = async (req, res) => {
         // Update settlement with settled expenses
         settlement.settledExpenses = settledExpenses;
         await settlement.save();
+
+        // ========== CREATE NOTIFICATIONS ==========
+        try {
+            // 1. Notify the recipient (toUser) that they received payment
+            await createNotification({
+                recipient: toUser,
+                type: 'settlement_received',
+                title: 'Payment Received',
+                message: `${payer.FullName} paid you ETB ${amount.toFixed(2)} in ${group.name}`,
+                data: {
+                    groupId,
+                    settlementId: settlement._id,
+                    amount,
+                    actionBy: fromUser
+                },
+                priority: 'high'
+            });
+
+            // 2. Notify the payer (fromUser) that they made a payment
+            await createNotification({
+                recipient: fromUser,
+                type: 'settlement_made',
+                title: 'Payment Sent',
+                message: `You paid ${recipient.FullName} ETB ${amount.toFixed(2)} in ${group.name}`,
+                data: {
+                    groupId,
+                    settlementId: settlement._id,
+                    amount,
+                    actionBy: fromUser
+                },
+                priority: 'medium'
+            });
+
+            // 3. If there's remaining amount after partial settlement
+            if (remainingAmount > 0.01) {
+                await createNotification({
+                    recipient: fromUser,
+                    type: 'payment_reminder',
+                    title: 'Partial Payment',
+                    message: `You still owe ETB ${remainingAmount.toFixed(2)} to ${recipient.FullName} in ${group.name}`,
+                    data: {
+                        groupId,
+                        amount: remainingAmount,
+                        actionBy: toUser
+                    },
+                    priority: 'medium'
+                });
+            }
+
+            console.log('✅ Settlement notifications created');
+        } catch (notifError) {
+            console.error('❌ Failed to create settlement notifications:', notifError);
+            // Don't fail the main request if notifications fail
+        }
+        // ==========================================
 
         // Populate user details
         const populatedSettlement = await Settlement.findById(settlement._id)
