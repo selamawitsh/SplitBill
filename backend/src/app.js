@@ -1,7 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import authRoutes from './routes/auth.routes.js';
-import {protect} from './middleware/auth.middleware.js';
 import groupRoutes from './routes/group.routes.js';
 import expenseRoutes from './routes/expense.routes.js';
 import balanceRoutes from './routes/balance.routes.js';
@@ -10,9 +9,22 @@ import notificationRoutes from './routes/notification.routes.js';
 
 const app = express();
 
-app.use(cors());
+// CORS
+app.use(cors({
+    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    credentials: true
+}));
+
+// Middleware
 app.use(express.json());
 
+// Request logging middleware
+app.use((req, res, next) => {
+    console.log(`📨 ${req.method} ${req.url}`);
+    next();
+});
+
+// Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/groups', groupRoutes);
 app.use('/api/expenses', expenseRoutes);  
@@ -20,14 +32,10 @@ app.use('/api/balances', balanceRoutes);
 app.use('/api/settlements', settlementRoutes);
 app.use('/api/notifications', notificationRoutes);
 
-
+// Test route
 app.get('/api/test', (req, res) => {
   res.json({ message: 'API is working!' });
 });
 
-app.get('/api/protected', protect, (req, res) => {
-  res.json({ message: 'This is a protected route', user: req.user });
-});
-
-
+// Export only app (not server)
 export default app;

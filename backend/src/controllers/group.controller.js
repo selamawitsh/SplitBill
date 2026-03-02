@@ -234,10 +234,11 @@ export const updateGroup = async (req, res) => {
 //         });
 //     }
 // };
+// ADD MEMBER TO GROUP
 export const addMember = async (req, res) => {
     try {
         const groupId = req.params.id;
-        const currentUserId = req.user._id; // Person trying to add member
+        const currentUserId = req.user._id;
         const { phoneNumber } = req.body;
 
         if (!phoneNumber) {
@@ -264,7 +265,7 @@ export const addMember = async (req, res) => {
             });
         }
 
-        // Check if the current user is a member of the group
+        // Check if the current user is a member
         const isCurrentUserMember = group.members.some(
             m => m.user._id.toString() === currentUserId.toString()
         );
@@ -286,10 +287,10 @@ export const addMember = async (req, res) => {
             });
         }
 
-        // Get the current user's name for notification
+        // Get the current user's name
         const currentUser = await User.findById(currentUserId).select('FullName');
 
-        // Add user to group (as regular member)
+        // Add user to group
         group.members.push({
             user: userToAdd._id,
             role: 'member'
@@ -297,55 +298,38 @@ export const addMember = async (req, res) => {
 
         await group.save();
 
+        // Return updated group
+        const updatedGroup = await Group.findById(groupId)
+            .populate('members.user', 'FullName email phoneNumber')
+            .populate('createdBy', 'FullName');
+
         // ========== CREATE NOTIFICATIONS ==========
         try {
-            // 1. Notify the new member that they were added
+            // Notify the new member
             await createNotification({
                 recipient: userToAdd._id,
                 type: 'member_added',
                 title: 'Added to Group',
                 message: `${currentUser.FullName} added you to "${group.name}"`,
                 data: {
-                    groupId,
-                    actionBy: currentUserId
+                    groupId: groupId.toString(),
+                    actionBy: currentUserId.toString()
                 },
                 priority: 'high'
             });
 
-            // 2. Optionally notify all existing members that someone new joined
-            // (You can uncomment this if you want everyone to know)
-            /*
-            for (const member of group.members) {
-                // Don't notify the new member or the person who added them
-                if (member.user._id.toString() !== userToAdd._id.toString() && 
-                    member.user._id.toString() !== currentUserId.toString()) {
-                    
-                    await createNotification({
-                        recipient: member.user._id,
-                        type: 'member_added',
-                        title: 'New Member Joined',
-                        message: `${userToAdd.FullName} joined "${group.name}"`,
-                        data: {
-                            groupId,
-                            actionBy: currentUserId
-                        },
-                        priority: 'low'
-                    });
-                }
-            }
-            */
+            // Socket emit for real-time update
+            emitToGroup(groupId.toString(), 'member_added', {
+                member: userToAdd,
+                addedBy: currentUser.FullName,
+                message: `${currentUser.FullName} added ${userToAdd.FullName} to the group`,
+                timestamp: new Date()
+            });
 
-            console.log('✅ Member added notifications created');
         } catch (notifError) {
-            console.error('❌ Failed to create member added notifications:', notifError);
-            // Don't fail the main request if notifications fail
+            console.error('❌ Failed to create notifications:', notifError);
         }
         // ==========================================
-
-        // Return updated group
-        const updatedGroup = await Group.findById(groupId)
-            .populate('members.user', 'FullName email phoneNumber')
-            .populate('createdBy', 'FullName');
 
         res.json({
             success: true,

@@ -1,100 +1,8 @@
 import Expense from '../models/Expense.model.js';
 import Group from '../models/Group.model.js';
-import { createNotification } from './notification.controller.js';
-
-// // Create a new expense
-// export const createExpense = async (req, res) => {
-//     try {
-//         const { description, amount, groupId, paidBy, splitType, splits, category, notes } = req.body;
-//         const userId = req.user._id;
-
-//         // Validate required fields
-//         if (!description || !amount || !groupId || !paidBy) {
-//             return res.status(400).json({ 
-//                 message: 'Missing required fields' 
-//             });
-//         }
-
-//         // Check if user is member of the group
-//         const group = await Group.findOne({
-//             _id: groupId,
-//             'members.user': userId
-//         });
-
-//         if (!group) {
-//             return res.status(403).json({ 
-//                 message: 'You are not a member of this group' 
-//             });
-//         }
-
-//         // Prepare splits based on split type
-//         let expenseSplits = [];
-        
-//         if (splitType === 'equal') {
-//             // Get all group members
-//             const memberCount = group.members.length;
-//             const splitAmount = amount / memberCount;
-            
-//             // Round to 2 decimal places, handle remainder
-//             const roundedAmount = Math.floor(splitAmount * 100) / 100;
-//             const remainder = amount - (roundedAmount * memberCount);
-            
-//             expenseSplits = group.members.map((member, index) => ({
-//                 user: member.user,
-//                 amount: index === 0 ? roundedAmount + remainder : roundedAmount, // First member gets remainder
-//                 isSettled: member.user.toString() === paidBy // If this member paid, their split is settled
-//             }));
-//         } else {
-//             // Custom splits - validate they sum to total
-//             const totalFromSplits = splits.reduce((sum, s) => sum + s.amount, 0);
-//             if (Math.abs(totalFromSplits - amount) > 0.01) {
-//                 return res.status(400).json({ 
-//                     message: 'Split amounts must equal total amount' 
-//                 });
-//             }
-            
-//             expenseSplits = splits.map(split => ({
-//                 user: split.user,
-//                 amount: split.amount,
-//                 isSettled: split.user === paidBy
-//             }));
-//         }
-
-//         // Create expense
-//         const expense = await Expense.create({
-//             description,
-//             amount,
-//             groupId,
-//             paidBy,
-//             splitType,
-//             splits: expenseSplits,
-//             category: category || 'other',
-//             notes
-//         });
-
-//         // Update group total expenses
-//         group.totalExpenses = (group.totalExpenses || 0) + amount;
-//         await group.save();
-
-//         // Populate user details in response
-//         const populatedExpense = await Expense.findById(expense._id)
-//             .populate('paidBy', 'FullName phoneNumber')
-//             .populate('splits.user', 'FullName phoneNumber')
-//             .populate('groupId', 'name');
-
-//         res.status(201).json({
-//             success: true,
-//             expense: populatedExpense
-//         });
-
-//     } catch (error) {
-//         console.error('Create expense error:', error);
-//         res.status(500).json({ 
-//             message: error.message || 'Server error while creating expense' 
-//         });
-//     }
-// };
 import User from '../models/User.model.js';
+import { createNotification } from './notification.controller.js';
+import { emitToGroup, emitToUser } from '../socket/socket.js';
 
 // Create a new expense
 export const createExpense = async (req, res) => {
@@ -173,6 +81,12 @@ export const createExpense = async (req, res) => {
         group.totalExpenses = (group.totalExpenses || 0) + amount;
         await group.save();
 
+        // Populate user details for response
+        const populatedExpense = await Expense.findById(expense._id)
+            .populate('paidBy', 'FullName phoneNumber')
+            .populate('splits.user', 'FullName phoneNumber')
+            .populate('groupId', 'name');
+
         // ========== CREATE NOTIFICATIONS ==========
         try {
             // 1. Notify all group members about the new expense
@@ -193,10 +107,10 @@ export const createExpense = async (req, res) => {
                             title: 'Expense Added',
                             message: `You added "${description}" for ETB ${amount.toFixed(2)} in ${group.name}`,
                             data: {
-                                groupId,
-                                expenseId: expense._id,
+                                groupId: groupId.toString(),
+                                expenseId: expense._id.toString(),
                                 amount,
-                                actionBy: userId
+                                actionBy: userId.toString()
                             },
                             priority: 'low'
                         });
@@ -209,32 +123,45 @@ export const createExpense = async (req, res) => {
                             title: 'New Expense Added',
                             message: `${payer.FullName} added "${description}" - You owe ETB ${memberSplit.amount.toFixed(2)} in ${group.name}`,
                             data: {
-                                groupId,
-                                expenseId: expense._id,
+                                groupId: groupId.toString(),
+                                expenseId: expense._id.toString(),
                                 amount: memberSplit.amount,
-                                actionBy: paidBy
+                                actionBy: paidBy.toString()
                             },
                             priority: 'high'
                         });
                     }
                 }
             }
-
-            // 2. Special notification for people who are not in the group but are in custom splits? 
-            // (Not needed since all splits should be group members)
             
             console.log('✅ Notifications created for expense');
         } catch (notifError) {
             console.error('❌ Failed to create expense notifications:', notifError);
-            // Don't fail the main request if notifications fail
         }
         // ==========================================
 
-        // Populate user details in response
-        const populatedExpense = await Expense.findById(expense._id)
-            .populate('paidBy', 'FullName phoneNumber')
-            .populate('splits.user', 'FullName phoneNumber')
-            .populate('groupId', 'name');
+        // ========== SOCKET.IO REAL-TIME EMITS ==========
+        try {
+            // Emit to all group members that a new expense was added
+            emitToGroup(groupId.toString(), 'new_expense', {
+                expense: populatedExpense,
+                message: `${req.user.FullName} added a new expense: ${description}`,
+                timestamp: new Date(),
+                groupId: groupId.toString()
+            });
+
+            // Update balances for all group members
+            emitToGroup(groupId.toString(), 'balances_updated', {
+                groupId: groupId.toString(),
+                message: 'Balances have been updated',
+                timestamp: new Date()
+            });
+
+            console.log('📢 Real-time updates sent for new expense');
+        } catch (socketError) {
+            console.error('❌ Socket emit error:', socketError);
+        }
+        // ==============================================
 
         res.status(201).json({
             success: true,

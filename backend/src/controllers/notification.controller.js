@@ -1,11 +1,7 @@
 import Notification from '../models/Notification.model.js';
-import Group from '../models/Group.model.js';
-import Expense from '../models/Expense.model.js';
-import User from '../models/User.model.js';
+import { emitToUser } from '../socket/socket.js';
 
 // @desc    Get user's notifications
-// @route   GET /api/notifications
-// @access  Private
 export const getMyNotifications = async (req, res) => {
     try {
         const userId = req.user._id;
@@ -41,7 +37,7 @@ export const getMyNotifications = async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Get notifications error:', error);
+        console.error('❌ Get notifications error:', error);
         res.status(500).json({ 
             message: 'Server error while fetching notifications' 
         });
@@ -49,8 +45,6 @@ export const getMyNotifications = async (req, res) => {
 };
 
 // @desc    Mark notification as read
-// @route   PUT /api/notifications/:id/read
-// @access  Private
 export const markAsRead = async (req, res) => {
     try {
         const notificationId = req.params.id;
@@ -62,7 +56,7 @@ export const markAsRead = async (req, res) => {
                 isRead: true, 
                 readAt: new Date() 
             },
-            { new: true }
+            { returnDocument: 'after' } // Fixed deprecation warning
         );
 
         if (!notification) {
@@ -71,13 +65,21 @@ export const markAsRead = async (req, res) => {
             });
         }
 
+        // Emit socket event to update unread count
+        const unreadCount = await Notification.countDocuments({
+            recipient: userId,
+            isRead: false
+        });
+        
+        emitToUser(userId.toString(), 'unread_count_updated', { count: unreadCount });
+
         res.json({
             success: true,
             notification
         });
 
     } catch (error) {
-        console.error('Mark as read error:', error);
+        console.error('❌ Mark as read error:', error);
         res.status(500).json({ 
             message: 'Server error' 
         });
@@ -85,8 +87,6 @@ export const markAsRead = async (req, res) => {
 };
 
 // @desc    Mark all notifications as read
-// @route   PUT /api/notifications/read-all
-// @access  Private
 export const markAllAsRead = async (req, res) => {
     try {
         const userId = req.user._id;
@@ -99,13 +99,16 @@ export const markAllAsRead = async (req, res) => {
             }
         );
 
+        // Emit socket event to update unread count
+        emitToUser(userId.toString(), 'unread_count_updated', { count: 0 });
+
         res.json({
             success: true,
             message: 'All notifications marked as read'
         });
 
     } catch (error) {
-        console.error('Mark all as read error:', error);
+        console.error('❌ Mark all as read error:', error);
         res.status(500).json({ 
             message: 'Server error' 
         });
@@ -113,8 +116,6 @@ export const markAllAsRead = async (req, res) => {
 };
 
 // @desc    Delete notification
-// @route   DELETE /api/notifications/:id
-// @access  Private
 export const deleteNotification = async (req, res) => {
     try {
         const notificationId = req.params.id;
@@ -131,13 +132,21 @@ export const deleteNotification = async (req, res) => {
             });
         }
 
+        // Update unread count after deletion
+        const unreadCount = await Notification.countDocuments({
+            recipient: userId,
+            isRead: false
+        });
+        
+        emitToUser(userId.toString(), 'unread_count_updated', { count: unreadCount });
+
         res.json({
             success: true,
             message: 'Notification deleted'
         });
 
     } catch (error) {
-        console.error('Delete notification error:', error);
+        console.error('❌ Delete notification error:', error);
         res.status(500).json({ 
             message: 'Server error' 
         });
@@ -145,8 +154,6 @@ export const deleteNotification = async (req, res) => {
 };
 
 // @desc    Get unread count
-// @route   GET /api/notifications/unread-count
-// @access  Private
 export const getUnreadCount = async (req, res) => {
     try {
         const userId = req.user._id;
@@ -162,7 +169,7 @@ export const getUnreadCount = async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Get unread count error:', error);
+        console.error('❌ Get unread count error:', error);
         res.status(500).json({ 
             message: 'Server error' 
         });
@@ -179,6 +186,13 @@ export const createNotification = async ({
     priority = 'medium'
 }) => {
     try {
+        console.log('📝 Creating notification with data:', { 
+            recipient, 
+            type, 
+            title, 
+            data 
+        });
+        
         const notification = await Notification.create({
             recipient,
             type,
@@ -188,12 +202,26 @@ export const createNotification = async ({
             priority
         });
 
-        // TODO: Emit socket event for real-time notification
-        // global.io.to(recipient.toString()).emit('newNotification', notification);
+        // Populate for real-time emit
+        const populatedNotification = await Notification.findById(notification._id)
+            .populate('data.actionBy', 'FullName')
+            .populate('data.groupId', 'name');
 
+        // Emit real-time notification via socket
+        emitToUser(recipient.toString(), 'new_notification', populatedNotification);
+
+        // Also emit unread count update
+        const unreadCount = await Notification.countDocuments({
+            recipient,
+            isRead: false
+        });
+        
+        emitToUser(recipient.toString(), 'unread_count_updated', { count: unreadCount });
+
+        console.log(`✅ Notification created for user ${recipient}: ${title}`);
         return notification;
     } catch (error) {
-        console.error('Create notification error:', error);
+        console.error('❌ Create notification error:', error);
         return null;
     }
 };

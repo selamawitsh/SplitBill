@@ -3,7 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { NotificationProvider } from './context/NotificationContext';
-
+import { SocketProvider } from './context/SocketContext';
 // Auth Screens
 import Login from './screens/Login';
 import Register from './screens/Register';
@@ -146,6 +146,7 @@ function App() {
     <Router>
       <AuthProvider>
         <NotificationProvider>
+           <SocketProvider>
           <Toaster 
             position="top-right"
             toastOptions={{
@@ -175,6 +176,7 @@ function App() {
             }}
           />
           <AppContent />
+          </SocketProvider>
         </NotificationProvider>
       </AuthProvider>
     </Router>
