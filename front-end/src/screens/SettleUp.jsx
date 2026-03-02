@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { settlementService } from '../services/settlementService';
+import { paymentService } from '../services/payment.service';
 import toast from 'react-hot-toast';
 
 const SettleUp = () => {
@@ -10,15 +11,16 @@ const SettleUp = () => {
     const { user } = useAuth();
     
     const [loading, setLoading] = useState(true);
-    const [submitting, setSubmitting] = useState(false);
     const [balances, setBalances] = useState([]);
     const [selectedDebt, setSelectedDebt] = useState(null);
     const [formData, setFormData] = useState({
         toUser: '',
         amount: '',
-        paymentMethod: 'cash',
         notes: ''
     });
+    const [processingPayment, setProcessingPayment] = useState(false);
+    const [selectedPaymentMethod, setSelectedPaymentMethod] = useState('cash');
+    const [refreshing, setRefreshing] = useState(false);
 
     useEffect(() => {
         fetchBalances();
@@ -30,11 +32,27 @@ const SettleUp = () => {
             const response = await settlementService.getOutstandingBalances(groupId);
             console.log('📥 Balances response:', response);
             setBalances(response.balances || []);
+            
+            // Clear selected debt if it no longer exists
+            if (selectedDebt) {
+                const stillExists = response.balances?.some(
+                    b => b.to === selectedDebt.to && b.from === user?._id
+                );
+                if (!stillExists) {
+                    setSelectedDebt(null);
+                    setFormData({
+                        toUser: '',
+                        amount: '',
+                        notes: ''
+                    });
+                }
+            }
         } catch (error) {
             console.error('❌ Error fetching balances:', error);
             toast.error(error.message || 'Failed to load balances');
         } finally {
             setLoading(false);
+            setRefreshing(false);
         }
     };
 
@@ -44,7 +62,6 @@ const SettleUp = () => {
         setFormData({
             toUser: debt.to,
             amount: debt.amount.toFixed(2),
-            paymentMethod: 'cash',
             notes: ''
         });
     };
@@ -56,37 +73,114 @@ const SettleUp = () => {
         });
     };
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-
-        if (!formData.toUser || !formData.amount) {
-            toast.error('Please select a debt to settle');
-            return;
-        }
-
-        setSubmitting(true);
-        try {
-            const settlementData = {
-                groupId,
-                toUser: formData.toUser,
-                amount: parseFloat(formData.amount),
-                paymentMethod: formData.paymentMethod,
-                notes: formData.notes
-            };
-
-            console.log('📤 Creating settlement:', settlementData);
-            const response = await settlementService.createSettlement(settlementData);
-            console.log('📥 Settlement response:', response);
-            
-            toast.success('Payment settled successfully!');
-            navigate(`/groups/${groupId}`);
-        } catch (error) {
-            console.error('❌ Settlement error:', error);
-            toast.error(error.message || 'Failed to settle payment');
-        } finally {
-            setSubmitting(false);
-        }
+    const handleRefresh = async () => {
+        setRefreshing(true);
+        await fetchBalances();
+        toast.success('Balances refreshed');
     };
+
+    const handlePayment = async (e) => {
+    e.preventDefault();
+    
+    if (!selectedDebt) {
+        toast.error('Please select a debt to settle');
+        return;
+    }
+
+    if (!formData.amount || parseFloat(formData.amount) <= 0) {
+        toast.error('Please enter a valid amount');
+        return;
+    }
+
+    if (parseFloat(formData.amount) > selectedDebt.amount) {
+        toast.error(`Amount cannot exceed ETB ${selectedDebt.amount.toFixed(2)}`);
+        return;
+    }
+
+    setProcessingPayment(true);
+    try {
+        // First create settlement
+        const settlementData = {
+            groupId,
+            toUser: selectedDebt.to,
+            amount: parseFloat(formData.amount),
+            paymentMethod: selectedPaymentMethod,
+            notes: formData.notes
+        };
+
+        console.log('📤 Creating settlement:', settlementData);
+        const settlementResponse = await settlementService.createSettlement(settlementData);
+        console.log('📥 Settlement response:', settlementResponse);
+        
+        // If settlement was created successfully
+        if (settlementResponse.success) {
+            toast.success('Settlement created successfully!');
+            
+            // For cash payments, just navigate back
+            if (selectedPaymentMethod === 'cash') {
+                toast.success('Cash payment recorded successfully!');
+                navigate(`/groups/${groupId}`);
+                return;
+            }
+            
+            // For online payments, check if we need to initialize payment
+            // But if the settlement is already completed, skip payment initialization
+            if (settlementResponse.settlement?.status === 'completed') {
+                toast.success('Payment completed successfully!');
+                navigate(`/groups/${groupId}`);
+                return;
+            }
+            
+            // Only try to initialize payment if settlement is pending
+            try {
+                const paymentData = {
+                    settlementId: settlementResponse.settlement._id,
+                    paymentMethod: selectedPaymentMethod,
+                    returnUrl: `${window.location.origin}/payment/complete`
+                };
+
+                console.log('📤 Initializing payment:', paymentData);
+                const paymentResponse = await paymentService.initializePayment(paymentData);
+                
+                if (paymentResponse.requiresRedirect && paymentResponse.checkoutUrl) {
+                    // Redirect to payment gateway
+                    window.location.href = paymentResponse.checkoutUrl;
+                } else {
+                    toast.success('Payment recorded successfully!');
+                    navigate(`/groups/${groupId}`);
+                }
+            } catch (paymentError) {
+                console.error('❌ Payment initialization error:', paymentError);
+                
+                // Check if it's the "already completed" error
+                if (paymentError.response?.data?.message?.includes('already completed')) {
+                    toast.success('Payment was already completed!');
+                    navigate(`/groups/${groupId}`);
+                } else {
+                    toast.error(paymentError.response?.data?.message || 'Payment initialization failed');
+                }
+            }
+        } else {
+            toast.error('Failed to create settlement');
+        }
+        
+    } catch (error) {
+        console.error('❌ Settlement creation error:', error);
+        
+        // Check if settlement was already created
+        if (error.response?.data?.message?.includes('already exists') || 
+            error.response?.data?.message?.includes('already completed')) {
+            toast.success('This settlement was already processed!');
+            // Refresh balances and redirect
+            await fetchBalances();
+            navigate(`/groups/${groupId}`);
+        } else {
+            toast.error(error.response?.data?.message || error.message || 'Payment failed');
+        }
+    } finally {
+        setProcessingPayment(false);
+    }
+};
 
     if (loading) {
         return (
@@ -106,18 +200,30 @@ const SettleUp = () => {
     return (
         <div className="min-h-screen bg-gray-50 py-8">
             <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-                {/* Header */}
-                <div className="mb-8">
-                    <Link
-                        to={`/groups/${groupId}`}
-                        className="text-sm text-primary-600 hover:text-primary-700 flex items-center"
+                {/* Header with refresh button */}
+                <div className="mb-8 flex items-center justify-between">
+                    <div>
+                        <Link
+                            to={`/groups/${groupId}`}
+                            className="text-sm text-primary-600 hover:text-primary-700 flex items-center"
+                        >
+                            ← Back to Group
+                        </Link>
+                        <h1 className="text-3xl font-bold text-gray-900 mt-2">Settle Up</h1>
+                        <p className="mt-2 text-gray-600">
+                            Choose a debt to settle and complete the payment
+                        </p>
+                    </div>
+                    <button
+                        onClick={handleRefresh}
+                        disabled={refreshing}
+                        className="p-2 text-gray-500 hover:text-primary-600 rounded-full hover:bg-gray-100 disabled:opacity-50"
+                        title="Refresh balances"
                     >
-                        ← Back to Group
-                    </Link>
-                    <h1 className="text-3xl font-bold text-gray-900 mt-2">Settle Up</h1>
-                    <p className="mt-2 text-gray-600">
-                        Choose a debt to settle and complete the payment
-                    </p>
+                        <svg className={`h-5 w-5 ${refreshing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                    </button>
                 </div>
 
                 {/* Summary Cards */}
@@ -271,7 +377,7 @@ const SettleUp = () => {
                             </h2>
                         </div>
 
-                        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+                        <div className="p-6 space-y-4">
                             {/* Payment To */}
                             <div>
                                 <label className="block text-sm font-medium text-gray-700">
@@ -307,21 +413,50 @@ const SettleUp = () => {
                             </div>
 
                             {/* Payment Method */}
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700">
+                            <div className="mt-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
                                     Payment Method
                                 </label>
-                                <select
-                                    name="paymentMethod"
-                                    value={formData.paymentMethod}
-                                    onChange={handleChange}
-                                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                                >
-                                    <option value="cash">Cash</option>
-                                    <option value="telebirr">TeleBirr</option>
-                                    <option value="chapa">Chapa</option>
-                                    <option value="other">Other</option>
-                                </select>
+                                <div className="grid grid-cols-3 gap-3">
+                                    <button
+                                        type="button"
+                                        onClick={() => setSelectedPaymentMethod('cash')}
+                                        className={`p-3 border rounded-lg text-center transition ${
+                                            selectedPaymentMethod === 'cash'
+                                                ? 'border-primary-500 bg-primary-50 text-primary-700'
+                                                : 'border-gray-300 hover:border-gray-400'
+                                        }`}
+                                    >
+                                        <span className="text-2xl mb-1 block">💵</span>
+                                        <span className="text-sm font-medium">Cash</span>
+                                    </button>
+                                    
+                                    <button
+                                        type="button"
+                                        onClick={() => setSelectedPaymentMethod('chapa')}
+                                        className={`p-3 border rounded-lg text-center transition ${
+                                            selectedPaymentMethod === 'chapa'
+                                                ? 'border-primary-500 bg-primary-50 text-primary-700'
+                                                : 'border-gray-300 hover:border-gray-400'
+                                        }`}
+                                    >
+                                        <span className="text-2xl mb-1 block">💳</span>
+                                        <span className="text-sm font-medium">Chapa</span>
+                                    </button>
+                                    
+                                    <button
+                                        type="button"
+                                        onClick={() => setSelectedPaymentMethod('telebirr')}
+                                        className={`p-3 border rounded-lg text-center transition ${
+                                            selectedPaymentMethod === 'telebirr'
+                                                ? 'border-primary-500 bg-primary-50 text-primary-700'
+                                                : 'border-gray-300 hover:border-gray-400'
+                                        }`}
+                                    >
+                                        <span className="text-2xl mb-1 block">📱</span>
+                                        <span className="text-sm font-medium">TeleBirr</span>
+                                    </button>
+                                </div>
                             </div>
 
                             {/* Notes */}
@@ -348,7 +483,6 @@ const SettleUp = () => {
                                         setFormData({
                                             toUser: '',
                                             amount: '',
-                                            paymentMethod: 'cash',
                                             notes: ''
                                         });
                                     }}
@@ -357,14 +491,25 @@ const SettleUp = () => {
                                     Cancel
                                 </button>
                                 <button
-                                    type="submit"
-                                    disabled={submitting}
-                                    className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50"
+                                    type="button"
+                                    onClick={handlePayment}
+                                    disabled={processingPayment || !selectedDebt}
+                                    className="px-6 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                    {submitting ? 'Processing...' : 'Confirm Payment'}
+                                    {processingPayment ? (
+                                        <span className="flex items-center justify-center">
+                                            <svg className="animate-spin h-5 w-5 mr-2" viewBox="0 0 24 24">
+                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                            </svg>
+                                            Processing...
+                                        </span>
+                                    ) : (
+                                        `Pay ETB ${formData.amount || '0.00'} via ${selectedPaymentMethod}`
+                                    )}
                                 </button>
                             </div>
-                        </form>
+                        </div>
                     </div>
                 )}
             </div>

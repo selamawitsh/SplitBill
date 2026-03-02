@@ -26,6 +26,11 @@ import SettleUp from './screens/SettleUp';
 // Components
 import Navbar from './components/Navbar';
 
+// Payment Screens
+import TransactionsScreen from './screens/TransactionsScreen';
+import PaymentComplete from './screens/PaymentComplete';
+
+
 // Layout for protected routes (includes Navbar)
 const ProtectedLayout = ({ children }) => {
   return (
@@ -133,6 +138,18 @@ function AppContent() {
         <ProtectedRoute>
           <NotificationsScreen />
         </ProtectedRoute>
+      } />
+
+      <Route path="/transactions" element={
+          <ProtectedRoute>
+              <TransactionsScreen />
+          </ProtectedRoute>
+      } />
+
+      <Route path="/payment/complete" element={
+          <ProtectedRoute>
+              <PaymentComplete />
+          </ProtectedRoute>
       } />
 
       {/* Catch all - redirect to dashboard */}
