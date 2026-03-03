@@ -40,6 +40,15 @@ export const groupService = {
             throw error.response?.data || { message: 'Failed to update group' };
         }
     },
+    
+     deleteGroup: async (groupId) => {
+        try {
+            const response = await API.delete(`/groups/${groupId}`);
+            return response.data;
+        } catch (error) {
+            throw error.response?.data || { message: 'Failed to delete group' };
+        }
+    },
 
     // Add member
     addMember: async (groupId, phoneNumber) => {
