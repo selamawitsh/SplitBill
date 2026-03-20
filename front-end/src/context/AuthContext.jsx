@@ -32,9 +32,9 @@ export const AuthProvider = ({ children }) => {
     try {
       // Convert frontend field names to backend field names
       const backendData = {
-        FullName: userData.fullName,  // frontend fullName → backend FullName
+        FullName: userData.fullName, 
         phoneNumber: userData.phoneNumber,
-        email: userData.email || undefined,  // Send undefined if empty
+        email: userData.email || undefined,  
         password: userData.password
       };
       
